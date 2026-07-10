@@ -6,6 +6,7 @@
 //! lifecycle rules from `strata-common`, and that every applied transition
 //! is appended to the event feed the workflow engine will consume.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use axum::Json;
@@ -34,6 +35,15 @@ pub struct DocumentRecord {
     pub doc_type: Option<String>,
     /// Team the document belongs to — the second retention-plan dimension.
     pub team: Option<String>,
+    /// Indexing keywords/tags (CAPTURE-08) — filterable via `keyword:` in
+    /// search strings (SEARCH-02). Set by automated indexing or by hand.
+    pub keywords: Vec<String>,
+    /// Free key-value metadata — filterable via `meta.<key>:` (SEARCH-02).
+    pub metadata: BTreeMap<String, String>,
+    /// Position in the filing structure, as a normalized `/a/b/c` path
+    /// (SEARCH-03). Purely a navigation aid: identity stays the ID, and
+    /// refiling never invalidates references (SEARCH-04).
+    pub folder: Option<String>,
     pub status: DocumentStatus,
     /// Confidentiality tier (STORE-04 × CAPTURE-10) — what storage placement
     /// and at-rest encryption are derived from.
@@ -83,6 +93,13 @@ pub struct CreateDocument {
     pub doc_type: Option<String>,
     #[serde(default)]
     pub team: Option<String>,
+    #[serde(default)]
+    pub keywords: Vec<String>,
+    #[serde(default)]
+    pub metadata: BTreeMap<String, String>,
+    /// Filing-structure position; normalized to a `/a/b/c` path.
+    #[serde(default)]
+    pub folder: Option<String>,
     /// Confidentiality tier the document starts with (STORE-04). Documents
     /// unclassified at capture time default to `internal`: never published
     /// by accident, but not locked to internal-only storage either.
@@ -90,12 +107,28 @@ pub struct CreateDocument {
     pub classification: Option<Confidentiality>,
 }
 
+/// Normalize a filing path to `/segment/segment` form: leading slash, no
+/// trailing slash, no empty segments. Rejects paths with no segments at all.
+pub(crate) fn normalize_folder(raw: &str) -> Result<String, ApiError> {
+    let segments: Vec<&str> = raw
+        .split('/')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    if segments.is_empty() {
+        return Err(ApiError::InvalidFolder(raw.to_string()));
+    }
+    Ok(format!("/{}", segments.join("/")))
+}
+
 /// `POST /documents` — register a document; it starts life as a draft.
 pub async fn create(
     State(state): State<Arc<AppState>>,
     Principal(actor): Principal,
     Json(body): Json<CreateDocument>,
-) -> (StatusCode, Json<DocumentRecord>) {
+) -> Result<(StatusCode, Json<DocumentRecord>), ApiError> {
+    let folder = body.folder.as_deref().map(normalize_folder).transpose()?;
+
     let now = Timestamp::now();
     let record = DocumentRecord {
         id: DocumentId::new(),
@@ -103,6 +136,9 @@ pub async fn create(
         owner: actor.user,
         doc_type: body.doc_type,
         team: body.team,
+        keywords: body.keywords,
+        metadata: body.metadata,
+        folder,
         status: DocumentStatus::Draft,
         classification: body.classification.unwrap_or(Confidentiality::Internal),
         content: None,
@@ -119,7 +155,61 @@ pub async fn create(
         .expect("documents lock poisoned")
         .insert(record.id, record.clone());
 
-    (StatusCode::CREATED, Json(record))
+    Ok((StatusCode::CREATED, Json(record)))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateDocument {
+    pub title: Option<String>,
+    pub doc_type: Option<String>,
+    pub team: Option<String>,
+    pub keywords: Option<Vec<String>>,
+    pub metadata: Option<BTreeMap<String, String>>,
+    /// New filing position; refiling never changes the document's ID or
+    /// reference (SEARCH-04). Clearing a folder is not supported yet.
+    pub folder: Option<String>,
+}
+
+/// `PATCH /documents/{id}` — update descriptive and indexing fields.
+///
+/// This is the human-override half of CAPTURE-08: automated indexing (a
+/// workflow step) and users go through the same endpoint, so corrected
+/// keywords, metadata, and filing are immediately searchable.
+pub async fn update(
+    State(state): State<Arc<AppState>>,
+    Principal(actor): Principal,
+    Path(id): Path<DocumentId>,
+    Json(body): Json<UpdateDocument>,
+) -> Result<Json<DocumentRecord>, ApiError> {
+    let folder = body.folder.as_deref().map(normalize_folder).transpose()?;
+
+    let mut documents = state.documents.write().expect("documents lock poisoned");
+    let record = documents
+        .get_mut(&id)
+        .ok_or(ApiError::DocumentNotFound(id))?;
+    authorize(&state, record, DocumentAction::Edit, &actor)?;
+
+    if let Some(title) = body.title {
+        record.title = title;
+    }
+    if let Some(doc_type) = body.doc_type {
+        record.doc_type = Some(doc_type);
+    }
+    if let Some(team) = body.team {
+        record.team = Some(team);
+    }
+    if let Some(keywords) = body.keywords {
+        record.keywords = keywords;
+    }
+    if let Some(metadata) = body.metadata {
+        record.metadata = metadata;
+    }
+    if let Some(folder) = folder {
+        record.folder = Some(folder);
+    }
+    record.updated_at = Timestamp::now();
+
+    Ok(Json(record.clone()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -164,6 +254,67 @@ pub async fn show(
     let record = documents.get(&id).ok_or(ApiError::DocumentNotFound(id))?;
     authorize(&state, record, DocumentAction::View, &actor)?;
     Ok(Json(record.clone()))
+}
+
+/// Machine-readable text extracted from a document's content (CAPTURE-07).
+///
+/// Extraction itself (OCR, PDF text layer, …) is a capture-pipeline step in
+/// the workflow layer; the server only stores the result and feeds it to
+/// full-text search (SEARCH-01) and long-term readability (PRESERVE-03).
+/// Kept beside the record rather than on it so document responses stay
+/// small.
+#[derive(Debug, Clone, Serialize)]
+pub struct ExtractedText {
+    pub text: String,
+    /// Who supplied the text — for OCR runs, the workflow's principal.
+    pub extracted_by: String,
+    pub extracted_at: Timestamp,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetText {
+    pub text: String,
+}
+
+/// `PUT /documents/{id}/text` — store or replace the extracted full text.
+pub async fn set_text(
+    State(state): State<Arc<AppState>>,
+    Principal(actor): Principal,
+    Path(id): Path<DocumentId>,
+    Json(body): Json<SetText>,
+) -> Result<Json<ExtractedText>, ApiError> {
+    let documents = state.documents.read().expect("documents lock poisoned");
+    let record = documents.get(&id).ok_or(ApiError::DocumentNotFound(id))?;
+    authorize(&state, record, DocumentAction::Edit, &actor)?;
+    drop(documents);
+
+    let extracted = ExtractedText {
+        text: body.text,
+        extracted_by: actor.user,
+        extracted_at: Timestamp::now(),
+    };
+    state
+        .texts
+        .write()
+        .expect("texts lock poisoned")
+        .insert(id, extracted.clone());
+
+    Ok(Json(extracted))
+}
+
+/// `GET /documents/{id}/text` — the stored extracted text, if any.
+pub async fn get_text(
+    State(state): State<Arc<AppState>>,
+    Principal(actor): Principal,
+    Path(id): Path<DocumentId>,
+) -> Result<Json<ExtractedText>, ApiError> {
+    let documents = state.documents.read().expect("documents lock poisoned");
+    let record = documents.get(&id).ok_or(ApiError::DocumentNotFound(id))?;
+    authorize(&state, record, DocumentAction::View, &actor)?;
+
+    let texts = state.texts.read().expect("texts lock poisoned");
+    let extracted = texts.get(&id).ok_or(ApiError::NoExtractedText(id))?;
+    Ok(Json(extracted.clone()))
 }
 
 #[derive(Debug, Deserialize)]

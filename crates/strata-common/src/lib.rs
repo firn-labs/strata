@@ -8,6 +8,7 @@ mod classification;
 mod dossier;
 mod policy;
 mod retention;
+mod search;
 mod status;
 
 pub use classification::{
@@ -22,6 +23,7 @@ pub use retention::{
     CertificateId, DeletionCertificate, DeletionTrigger, ExpiryAction, RetentionDeadline,
     RetentionNotification, RetentionPlan, RetentionRule, RetentionSource,
 };
+pub use search::{DocumentRef, FilterExpr, FilterParseError, RefParseError, UnknownField};
 pub use status::{DocumentStatus, StatusChange, StatusChangedEvent};
 
 use serde::{Deserialize, Serialize};
