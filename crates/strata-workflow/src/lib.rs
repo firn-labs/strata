@@ -13,12 +13,16 @@
 //!   `POST /flows/{id}/runs` executes and returns the trace,
 //!   `GET /flows/{id}/runs?status=` lists a flow's run history,
 //!   `GET /runs/{id}` returns one full trace.
+//! - Export and import of all flow definitions (WORKFLOW-07) in a versioned
+//!   envelope (see `docs/flow-export-format.md`): `GET /flows/export`,
+//!   `GET /flows/{id}/export`, `POST /flows/import?on_conflict=`.
 //!
 //! Step nodes do not yet call the core server — that action executor lands
 //! with WORKFLOW-08 behind the same trace format.
 
 mod engine;
 mod error;
+mod export;
 mod flow;
 mod flows;
 mod identity;
@@ -26,6 +30,7 @@ mod runs;
 
 pub use engine::{RunId, RunRecord, RunStatus, StepOutcome, StepRecord};
 pub use error::ApiError;
+pub use export::{EXPORT_FORMAT, EXPORT_VERSION, FlowExport, ImportReport, OnConflict};
 pub use flow::{FlowDefinition, FlowEdge, FlowId, FlowNode, NodeKind};
 
 use std::collections::HashMap;
@@ -63,7 +68,10 @@ pub fn app(state: std::sync::Arc<AppState>) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/flows", post(flows::create).get(flows::list))
+        .route("/flows/export", get(export::export_all))
+        .route("/flows/import", post(export::import))
         .route("/flows/{id}", get(flows::show))
+        .route("/flows/{id}/export", get(export::export_one))
         .route(
             "/flows/{id}/runs",
             post(runs::trigger).get(runs::list_for_flow),

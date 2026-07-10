@@ -23,6 +23,15 @@ pub enum ApiError {
     #[error("node {node:?} cannot start a run: {reason}")]
     NotATrigger { node: String, reason: &'static str },
 
+    #[error("import is invalid: {0}")]
+    InvalidImport(String),
+
+    #[error(
+        "import conflicts with existing flows ({0}); \
+         re-run with ?on_conflict=replace or ?on_conflict=skip"
+    )]
+    ImportConflict(String),
+
     #[error("{0}")]
     Unauthenticated(&'static str),
 }
@@ -34,6 +43,8 @@ impl ApiError {
             ApiError::RunNotFound(_) => StatusCode::NOT_FOUND,
             ApiError::InvalidFlow(_) => StatusCode::UNPROCESSABLE_ENTITY,
             ApiError::NotATrigger { .. } => StatusCode::UNPROCESSABLE_ENTITY,
+            ApiError::InvalidImport(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            ApiError::ImportConflict(_) => StatusCode::CONFLICT,
             ApiError::Unauthenticated(_) => StatusCode::UNAUTHORIZED,
         }
     }
