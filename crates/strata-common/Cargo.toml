@@ -1,0 +1,15 @@
+[package]
+name = "strata-common"
+description = "Shared domain types and utilities for Strata services"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

@@ -1,0 +1,55 @@
+# Development/demo stack. Run from the repository root:
+#   docker compose -f deploy/docker-compose.yml up --build
+name: strata
+
+services:
+  server:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.server
+    environment:
+      RUST_LOG: info
+    ports:
+      - "8080:8080"
+    volumes:
+      - strata-data:/var/lib/strata
+
+  workflow:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.workflow
+    environment:
+      RUST_LOG: info
+      STRATA_SERVER_URL: http://server:8080
+    ports:
+      - "8081:8081"
+    depends_on:
+      - server
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - server
+      - workflow
+
+  # --- Optional integrations (uncomment to enable) ---------------------------
+  # Office document viewing/editing via WOPI:
+  # collabora:
+  #   image: collabora/code
+  #   ports:
+  #     - "9980:9980"
+  #   environment:
+  #     - extra_params=--o:ssl.enable=false
+  #
+  # PDF manipulation for workflow steps:
+  # stirling-pdf:
+  #   image: stirlingtools/stirling-pdf:latest
+  #   ports:
+  #     - "8082:8080"
+
+volumes:
+  strata-data:

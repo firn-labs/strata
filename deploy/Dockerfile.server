@@ -1,0 +1,14 @@
+# Build context is the repository root:
+#   docker build -f deploy/Dockerfile.server .
+FROM rust:1-slim AS builder
+WORKDIR /app
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY crates ./crates
+RUN cargo build --release -p strata-server
+
+FROM debian:bookworm-slim
+RUN useradd --system --uid 10001 strata
+COPY --from=builder /app/target/release/strata-server /usr/local/bin/strata-server
+USER strata
+EXPOSE 8080
+ENTRYPOINT ["strata-server"]
