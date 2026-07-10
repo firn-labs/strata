@@ -6,12 +6,17 @@
 
 mod dossier;
 mod policy;
+mod retention;
 mod status;
 
 pub use dossier::{
     DossierAcl, DossierAction, DossierEntry, DossierEntryId, DossierId, EntryReference,
 };
 pub use policy::{Actor, DocumentAction, StatusPolicy, Trustee};
+pub use retention::{
+    CertificateId, DeletionCertificate, DeletionTrigger, ExpiryAction, RetentionDeadline,
+    RetentionNotification, RetentionPlan, RetentionRule, RetentionSource,
+};
 pub use status::{DocumentStatus, StatusChange, StatusChangedEvent};
 
 use serde::{Deserialize, Serialize};

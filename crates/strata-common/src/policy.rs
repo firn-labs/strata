@@ -27,14 +27,17 @@ pub enum DocumentAction {
     Delete,
     /// Move the document to another lifecycle status.
     ChangeStatus,
+    /// Set or move the document's deletion deadline (PRESERVE-06).
+    SetRetention,
 }
 
 impl DocumentAction {
-    pub const ALL: [DocumentAction; 4] = [
+    pub const ALL: [DocumentAction; 5] = [
         DocumentAction::View,
         DocumentAction::Edit,
         DocumentAction::Delete,
         DocumentAction::ChangeStatus,
+        DocumentAction::SetRetention,
     ];
 }
 
@@ -115,9 +118,10 @@ impl StatusPolicy {
     ///   later, STORE-09); only the owner moves it on.
     /// - **Archived**: anyone may view (PRESERVE-05: archives stay
     ///   accessible), nobody edits, the owner may reactivate or release for
-    ///   deletion.
+    ///   deletion and manage the deletion deadline (PRESERVE-06).
     /// - **Deletable**: visible to the owner, deletable by the owner (the
-    ///   retention engine acts with its own authority later, PRESERVE-06).
+    ///   retention engine acts with its own authority, PRESERVE-06/07); the
+    ///   deadline stays adjustable by the owner.
     pub fn baseline() -> Self {
         use DocumentAction::*;
         use DocumentStatus::*;
@@ -144,7 +148,11 @@ impl StatusPolicy {
         );
         rules.insert(
             Archived,
-            BTreeMap::from([(View, vec![Anyone]), (ChangeStatus, vec![Owner])]),
+            BTreeMap::from([
+                (View, vec![Anyone]),
+                (ChangeStatus, vec![Owner]),
+                (SetRetention, vec![Owner]),
+            ]),
         );
         rules.insert(
             Deletable,
@@ -152,6 +160,7 @@ impl StatusPolicy {
                 (View, vec![Owner]),
                 (Delete, vec![Owner]),
                 (ChangeStatus, vec![Owner]),
+                (SetRetention, vec![Owner]),
             ]),
         );
 
