@@ -3,7 +3,13 @@
 Strata implements the classic ECM lifecycle — **Capture → Store → Access → Workflow →
 Search → Deliver → Preserve** — as three independently deployable layers. The founding
 requirements come from a bachelor thesis on customizable document management; the
-mind maps distilled from it live in `docs/requirements/`.
+structured requirements catalog distilled from it lives in `docs/requirements/`.
+
+That research validates this exact shape: its core finding is that an
+organization-wide DMS needs *functional segmentation* into user interface, logic
+(expressed entirely as workflows), and storage management, connected only through
+APIs. One rule follows and binds all server work: **every core capability must be
+exposed via API and callable by the workflow layer — nothing may be UI-only.**
 
 ## The three layers
 
@@ -68,3 +74,4 @@ sidecars. A desktop companion app may come later; the server is the product.
 | 3 | AGPL-3.0-or-later | Server product; network copyleft keeps hosted forks open |
 | 4 | SvelteKit frontend | Team expertise, Svelte Flow available, light runtime |
 | 5 | WOPI for office documents | Battle-tested (Nextcloud model); avoids building an editor |
+| 6 | API-first: every server capability callable by the workflow layer | Logic lives in workflows (founding research); UI-only features would break that model |
