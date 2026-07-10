@@ -14,7 +14,8 @@ use axum::http::StatusCode;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use strata_common::{
-    Actor, DocumentAction, DocumentId, DocumentStatus, StatusChange, StatusChangedEvent,
+    Actor, DocumentAction, DocumentId, DocumentStatus, RetentionDeadline, RetentionSource,
+    StatusChange, StatusChangedEvent,
 };
 
 use crate::AppState;
@@ -28,7 +29,15 @@ pub struct DocumentRecord {
     pub title: String,
     /// User who registered the document; `Trustee::Owner` rules match them.
     pub owner: String,
+    /// Document type ("invoice", "contract", …) — what retention-plan rules
+    /// match on (PRESERVE-06). Free-form until a managed type catalog lands.
+    pub doc_type: Option<String>,
+    /// Team the document belongs to — the second retention-plan dimension.
+    pub team: Option<String>,
     pub status: DocumentStatus,
+    /// Deletion deadline (PRESERVE-06): while set and in the future, the
+    /// document cannot be deleted.
+    pub retention: Option<RetentionDeadline>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
     /// Every applied status transition, oldest first (audit trail).
@@ -38,7 +47,7 @@ pub struct DocumentRecord {
 /// Check `action` against the current policy, treating a denied `View` as
 /// "not found" so the API never confirms the existence of documents the
 /// caller may not see.
-fn authorize(
+pub(crate) fn authorize(
     state: &AppState,
     record: &DocumentRecord,
     action: DocumentAction,
@@ -62,6 +71,10 @@ fn authorize(
 #[derive(Debug, Deserialize)]
 pub struct CreateDocument {
     pub title: String,
+    #[serde(default)]
+    pub doc_type: Option<String>,
+    #[serde(default)]
+    pub team: Option<String>,
 }
 
 /// `POST /documents` — register a document; it starts life as a draft.
@@ -75,7 +88,10 @@ pub async fn create(
         id: DocumentId::new(),
         title: body.title,
         owner: actor.user,
+        doc_type: body.doc_type,
+        team: body.team,
         status: DocumentStatus::Draft,
+        retention: None,
         created_at: now,
         updated_at: now,
         history: Vec::new(),
@@ -179,6 +195,26 @@ pub async fn change_status(
     record.status = body.to;
     record.updated_at = now;
     record.history.push(change.clone());
+
+    // Archiving starts the retention clock (PRESERVE-06): documents without
+    // an explicit deadline get the standard one from the retention plan. An
+    // already-set deadline — explicit, or from an earlier archiving before a
+    // reactivation round-trip — is never overwritten here.
+    if record.status == DocumentStatus::Archived && record.retention.is_none() {
+        let plan = state
+            .retention_plan
+            .read()
+            .expect("retention plan lock poisoned");
+        if let Some(rule) = plan.applicable_rule(record.doc_type.as_deref(), record.team.as_deref())
+        {
+            record.retention = Some(RetentionDeadline {
+                delete_after: crate::retention::deadline_from(now, rule.retain_for_days),
+                source: RetentionSource::Plan,
+                set_by: actor.user.clone(),
+                set_at: now,
+            });
+        }
+    }
 
     let mut events = state.events.write().expect("events lock poisoned");
     let seq = events.len() as u64 + 1;

@@ -19,6 +19,13 @@
 //!   `POST /dossiers/{id}/entries`,
 //!   `DELETE /dossiers/{id}/entries/{entry_id}`,
 //!   `PUT /dossiers/{id}/entries/{entry_id}/access`.
+//! - Retention and deletion engine (PRESERVE-06/07/08): deletion deadlines
+//!   with a per-type/per-team retention plan, deadline-blocked deletion with
+//!   certificates and a deletion history, and an expiry sweep that deletes or
+//!   notifies per document class: `PUT /documents/{id}/retention`,
+//!   `DELETE /documents/{id}`, `GET`/`PUT /retention/plan`,
+//!   `POST /retention/sweep`, `GET /retention/deletions`,
+//!   `GET /retention/notifications`.
 
 mod documents;
 mod dossiers;
@@ -26,6 +33,7 @@ mod error;
 mod events;
 mod identity;
 mod policy;
+mod retention;
 
 pub use error::ApiError;
 
@@ -37,7 +45,8 @@ use axum::{
     routing::{delete, get, post, put},
 };
 use strata_common::{
-    DocumentId, DossierId, Health, HealthStatus, StatusChangedEvent, StatusPolicy,
+    DeletionCertificate, DocumentId, DossierId, Health, HealthStatus, RetentionNotification,
+    RetentionPlan, StatusChangedEvent, StatusPolicy,
 };
 
 use documents::DocumentRecord;
@@ -56,6 +65,15 @@ pub struct AppState {
     dossiers: RwLock<HashMap<DossierId, DossierRecord>>,
     policy: RwLock<StatusPolicy>,
     events: RwLock<Vec<StatusChangedEvent>>,
+    /// Standard deletion deadlines per document type/team (PRESERVE-06).
+    /// Starts empty: standard deadlines are a deployment's legal decision,
+    /// not something to ship defaults for.
+    retention_plan: RwLock<RetentionPlan>,
+    /// Deletion history: one certificate per performed deletion, in order
+    /// (PRESERVE-08).
+    deletions: RwLock<Vec<DeletionCertificate>>,
+    /// Expiry notifications issued to responsible persons (PRESERVE-07).
+    notifications: RwLock<Vec<RetentionNotification>>,
 }
 
 impl AppState {
@@ -65,6 +83,9 @@ impl AppState {
             dossiers: RwLock::new(HashMap::new()),
             policy: RwLock::new(StatusPolicy::baseline()),
             events: RwLock::new(Vec::new()),
+            retention_plan: RwLock::new(RetentionPlan::default()),
+            deletions: RwLock::new(Vec::new()),
+            notifications: RwLock::new(Vec::new()),
         }
     }
 }
@@ -80,8 +101,12 @@ pub fn app(state: std::sync::Arc<AppState>) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/documents", post(documents::create).get(documents::list))
-        .route("/documents/{id}", get(documents::show))
+        .route(
+            "/documents/{id}",
+            get(documents::show).delete(retention::delete_document),
+        )
         .route("/documents/{id}/status", post(documents::change_status))
+        .route("/documents/{id}/retention", put(retention::set_deadline))
         .route("/dossiers", post(dossiers::create).get(dossiers::list))
         .route(
             "/dossiers/{id}",
@@ -98,6 +123,16 @@ pub fn app(state: std::sync::Arc<AppState>) -> Router {
             put(dossiers::set_entry_access),
         )
         .route("/policy/status", get(policy::show).put(policy::replace))
+        .route(
+            "/retention/plan",
+            get(retention::plan_show).put(retention::plan_replace),
+        )
+        .route("/retention/sweep", post(retention::sweep))
+        .route("/retention/deletions", get(retention::deletions_list))
+        .route(
+            "/retention/notifications",
+            get(retention::notifications_list),
+        )
         .route("/events/status", get(events::list))
         .with_state(state)
 }

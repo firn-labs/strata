@@ -3,6 +3,7 @@
 use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use jiff::Timestamp;
 use serde_json::json;
 use strata_common::{
     DocumentAction, DocumentId, DocumentStatus, DossierAction, DossierEntryId, DossierId,
@@ -44,6 +45,17 @@ pub enum ApiError {
         dossier: DossierId,
     },
 
+    #[error(
+        "a deletion deadline can only be set at or after archive time; document is still {status}"
+    )]
+    RetentionBeforeArchive { status: DocumentStatus },
+
+    #[error("deletion of document {document} is blocked until {until} (PRESERVE-06)")]
+    DeletionBlocked {
+        document: DocumentId,
+        until: Timestamp,
+    },
+
     #[error("{0}")]
     Unauthenticated(&'static str),
 }
@@ -58,6 +70,8 @@ impl ApiError {
             ApiError::DossierForbidden(_) => StatusCode::FORBIDDEN,
             ApiError::EntryNotFound(_) => StatusCode::NOT_FOUND,
             ApiError::DocumentAlreadyFiled { .. } => StatusCode::CONFLICT,
+            ApiError::RetentionBeforeArchive { .. } => StatusCode::CONFLICT,
+            ApiError::DeletionBlocked { .. } => StatusCode::CONFLICT,
             ApiError::Unauthenticated(_) => StatusCode::UNAUTHORIZED,
         }
     }
