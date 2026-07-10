@@ -1,22 +1,37 @@
 # Requirements catalog
 
-The functional requirements for Strata originate from a bachelor thesis on
-customizable document management systems and a set of mind maps covering the
-ECM lifecycle stages:
+The functional requirements for Strata originate from founding research on
+customizable, company-wide document management systems (a qualitative study
+combining ECM literature and practitioner interviews), structured along the
+ECM lifecycle stages of the "House of DMS": **Capture, Preserve, Access,
+Search, Deliver** and **Workflow**, all resting on the pillar **Store**.
 
-- **Capture** — scanning, digital ingest, e-mail integration, OCR/IDR, AI-assisted
-  classification, metadata definition
-- **Store** — versioning, history, E-Akte, secure/immutable storage, storage
-  abstraction and media migration, cloud storage with retained data ownership
-- **Access** — document viewer, document creation, collaboration, access management,
-  authentication (SSO, MFA, IdP)
-- **Workflow** — department-built flows, low-code programming, permissions, execution
-  logging, export, graphical/textual/semantic representation
-- **Search** — full-text, filter, visual search, recommender, boolean queries
-- **Deliver** — internal/external sharing, printing, industry-standard exchange
-- **Preserve** — legally compliant archiving, retention/deletion management,
-  long-term formats, tamper evidence
+The study's core conclusion is the reason Strata exists: a DMS suitable for
+organization-wide use must be flexible at every level, and that flexibility is
+achieved through **functional segmentation** into three independently adaptable
+components — user interface, logic (expressed entirely as workflows), and
+storage management — connected exclusively through APIs. Strata's three-layer
+architecture implements exactly this; see [architecture.md](../architecture.md).
 
-**TODO:** distill the thesis and the mind-map images into structured requirement
-documents here (one file per lifecycle stage), each requirement traceable to
-GitHub issues.
+## Catalog
+
+| Stage | File | ID prefix |
+|---|---|---|
+| Store | [store.md](store.md) | `STORE` |
+| Capture | [capture.md](capture.md) | `CAPTURE` |
+| Preserve | [preserve.md](preserve.md) | `PRESERVE` |
+| Access | [access.md](access.md) | `ACCESS` |
+| Search | [search.md](search.md) | `SEARCH` |
+| Deliver | [deliver.md](deliver.md) | `DELIVER` |
+| Workflow | [workflow.md](workflow.md) | `WORKFLOW` |
+
+## Conventions
+
+- **Stable IDs.** Every requirement has an ID (`STORE-03`). IDs are never
+  reused or renumbered; superseded requirements are marked as such and kept.
+- **Priority.** `must` (core product promise), `should` (expected of a mature
+  release), `later` (valuable, deliberately deferred).
+- **Traceability.** Implementation issues and PRs reference requirement IDs.
+  A requirement without a linked issue is unplanned, not rejected.
+- **Wording.** "The system" means Strata as a whole; the layer responsible
+  (server, workflow engine, frontend) is named where it matters.

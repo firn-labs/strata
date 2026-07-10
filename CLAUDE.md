@@ -17,6 +17,9 @@ SvelteKit frontend. See `docs/architecture.md` before making cross-layer changes
 ## Architecture rules
 
 - Only `strata-server` talks to storage. The workflow engine and frontend go through its API.
+- API-first: every server capability is exposed via API and callable by the workflow
+  layer — nothing may be UI-only. Requirements carry stable IDs (`STORE-03`); reference
+  them in issues and PRs (see `docs/requirements/README.md`).
 - Storage providers implement `StorageProvider` and store *bytes only* — versioning,
   permissions, and metadata belong to the server.
 - Documents are addressed by `DocumentId`, never by storage path.
