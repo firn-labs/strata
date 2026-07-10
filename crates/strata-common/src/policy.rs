@@ -29,15 +29,18 @@ pub enum DocumentAction {
     ChangeStatus,
     /// Set or move the document's deletion deadline (PRESERVE-06).
     SetRetention,
+    /// Change the document's confidentiality classification (STORE-04).
+    Classify,
 }
 
 impl DocumentAction {
-    pub const ALL: [DocumentAction; 5] = [
+    pub const ALL: [DocumentAction; 6] = [
         DocumentAction::View,
         DocumentAction::Edit,
         DocumentAction::Delete,
         DocumentAction::ChangeStatus,
         DocumentAction::SetRetention,
+        DocumentAction::Classify,
     ];
 }
 
@@ -113,9 +116,9 @@ impl StatusPolicy {
 
     /// The policy shipped as the initial server configuration.
     ///
-    /// - **Draft**: private to the owner.
+    /// - **Draft**: private to the owner, who also classifies it (STORE-04).
     /// - **In use**: anyone may view and edit (dossier-level ACLs narrow this
-    ///   later, STORE-09); only the owner moves it on.
+    ///   later, STORE-09); only the owner moves it on or reclassifies it.
     /// - **Archived**: anyone may view (PRESERVE-05: archives stay
     ///   accessible), nobody edits, the owner may reactivate or release for
     ///   deletion and manage the deletion deadline (PRESERVE-06).
@@ -136,6 +139,7 @@ impl StatusPolicy {
                 (View, vec![Owner]),
                 (Edit, vec![Owner]),
                 (ChangeStatus, vec![Owner]),
+                (Classify, vec![Owner]),
             ]),
         );
         rules.insert(
@@ -144,6 +148,7 @@ impl StatusPolicy {
                 (View, vec![Anyone]),
                 (Edit, vec![Anyone]),
                 (ChangeStatus, vec![Owner]),
+                (Classify, vec![Owner]),
             ]),
         );
         rules.insert(

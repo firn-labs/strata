@@ -26,16 +26,26 @@
 //!   `DELETE /documents/{id}`, `GET`/`PUT /retention/plan`,
 //!   `POST /retention/sweep`, `GET /retention/deletions`,
 //!   `GET /retention/notifications`.
+//! - Classification-driven storage placement and encryption (STORE-04 ×
+//!   CAPTURE-10): every document carries a confidentiality tier; content
+//!   upload derives backend and at-rest encryption from it, and
+//!   reclassification re-places non-compliant blobs:
+//!   `PUT`/`GET /documents/{id}/content`,
+//!   `PUT /documents/{id}/classification`, `GET`/`PUT /policy/placement`.
 
+mod crypto;
 mod documents;
 mod dossiers;
 mod error;
 mod events;
 mod identity;
+mod placement;
 mod policy;
 mod retention;
 
+pub use crypto::OperatorKey;
 pub use error::ApiError;
+pub use placement::StorageBackend;
 
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -45,8 +55,8 @@ use axum::{
     routing::{delete, get, post, put},
 };
 use strata_common::{
-    DeletionCertificate, DocumentId, DossierId, Health, HealthStatus, RetentionNotification,
-    RetentionPlan, StatusChangedEvent, StatusPolicy,
+    DeletionCertificate, DocumentId, DossierId, Health, HealthStatus, PlacementPolicy,
+    RetentionNotification, RetentionPlan, StatusChangedEvent, StatusPolicy,
 };
 
 use documents::DocumentRecord;
@@ -74,10 +84,25 @@ pub struct AppState {
     deletions: RwLock<Vec<DeletionCertificate>>,
     /// Expiry notifications issued to responsible persons (PRESERVE-07).
     notifications: RwLock<Vec<RetentionNotification>>,
+    /// Placement requirements per confidentiality tier (STORE-04),
+    /// administered via `PUT /policy/placement`.
+    placement: RwLock<PlacementPolicy>,
+    /// Attached storage media, in placement-preference order. Fixed at
+    /// startup — attaching backends at runtime is a later concern.
+    backends: Vec<StorageBackend>,
+    /// Key for all at-rest encryption (STORE-04); owned by the operating
+    /// organization, configured at startup.
+    operator_key: OperatorKey,
 }
 
 impl AppState {
+    /// State without any storage backend: metadata operations all work,
+    /// content upload reports that no backend can take the blob.
     pub fn new() -> Self {
+        Self::with_storage(Vec::new(), OperatorKey::generate())
+    }
+
+    pub fn with_storage(backends: Vec<StorageBackend>, operator_key: OperatorKey) -> Self {
         Self {
             documents: RwLock::new(HashMap::new()),
             dossiers: RwLock::new(HashMap::new()),
@@ -86,6 +111,9 @@ impl AppState {
             retention_plan: RwLock::new(RetentionPlan::default()),
             deletions: RwLock::new(Vec::new()),
             notifications: RwLock::new(Vec::new()),
+            placement: RwLock::new(PlacementPolicy::baseline()),
+            backends,
+            operator_key,
         }
     }
 }
@@ -106,6 +134,11 @@ pub fn app(state: std::sync::Arc<AppState>) -> Router {
             get(documents::show).delete(retention::delete_document),
         )
         .route("/documents/{id}/status", post(documents::change_status))
+        .route(
+            "/documents/{id}/content",
+            put(placement::upload).get(placement::download),
+        )
+        .route("/documents/{id}/classification", put(placement::reclassify))
         .route("/documents/{id}/retention", put(retention::set_deadline))
         .route("/dossiers", post(dossiers::create).get(dossiers::list))
         .route(
@@ -123,6 +156,10 @@ pub fn app(state: std::sync::Arc<AppState>) -> Router {
             put(dossiers::set_entry_access),
         )
         .route("/policy/status", get(policy::show).put(policy::replace))
+        .route(
+            "/policy/placement",
+            get(placement::policy_show).put(placement::policy_replace),
+        )
         .route(
             "/retention/plan",
             get(retention::plan_show).put(retention::plan_replace),

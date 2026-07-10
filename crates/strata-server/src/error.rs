@@ -6,8 +6,10 @@ use axum::response::{IntoResponse, Response};
 use jiff::Timestamp;
 use serde_json::json;
 use strata_common::{
-    DocumentAction, DocumentId, DocumentStatus, DossierAction, DossierEntryId, DossierId,
+    Confidentiality, DocumentAction, DocumentId, DocumentStatus, DossierAction, DossierEntryId,
+    DossierId,
 };
+use strata_storage::StorageError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ApiError {
@@ -56,6 +58,25 @@ pub enum ApiError {
         until: Timestamp,
     },
 
+    #[error("document {0} has no stored content")]
+    NoContent(DocumentId),
+
+    #[error("no attached storage backend may hold {tier} documents (STORE-04)")]
+    NoPlacementBackend { tier: Confidentiality },
+
+    /// A document's blob lives on a backend that is no longer attached —
+    /// an operator configuration error, surfaced rather than masked.
+    #[error("storage backend {0} is not attached but still holds document blobs")]
+    BackendDetached(String),
+
+    /// Stored bytes could not be decrypted — wrong operator key or a
+    /// tampered/corrupted blob.
+    #[error("stored content of document {0} could not be decrypted")]
+    UnreadableBlob(DocumentId),
+
+    #[error("storage backend failure: {0}")]
+    Storage(#[from] StorageError),
+
     #[error("{0}")]
     Unauthenticated(&'static str),
 }
@@ -72,6 +93,11 @@ impl ApiError {
             ApiError::DocumentAlreadyFiled { .. } => StatusCode::CONFLICT,
             ApiError::RetentionBeforeArchive { .. } => StatusCode::CONFLICT,
             ApiError::DeletionBlocked { .. } => StatusCode::CONFLICT,
+            ApiError::NoContent(_) => StatusCode::NOT_FOUND,
+            ApiError::NoPlacementBackend { .. } => StatusCode::CONFLICT,
+            ApiError::BackendDetached(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            ApiError::UnreadableBlob(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            ApiError::Storage(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::Unauthenticated(_) => StatusCode::UNAUTHORIZED,
         }
     }

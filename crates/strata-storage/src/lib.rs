@@ -8,12 +8,16 @@
 //! Currently implemented providers:
 //! - [`LocalFsProvider`] — stores blobs in a directory on the local
 //!   filesystem (also covers NFS/SMB media mounted by the host).
+//! - [`MemoryProvider`] — keeps blobs in process memory, for tests and
+//!   local development.
 //!
 //! Planned providers: S3-compatible object storage, native SMB.
 
 mod local_fs;
+mod memory;
 
 pub use local_fs::LocalFsProvider;
+pub use memory::MemoryProvider;
 
 use strata_common::DocumentId;
 
