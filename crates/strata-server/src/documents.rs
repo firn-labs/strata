@@ -14,8 +14,8 @@ use axum::http::StatusCode;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use strata_common::{
-    Actor, DocumentAction, DocumentId, DocumentStatus, RetentionDeadline, RetentionSource,
-    StatusChange, StatusChangedEvent,
+    Actor, BlobPlacement, ClassificationChange, Confidentiality, DocumentAction, DocumentId,
+    DocumentStatus, RetentionDeadline, RetentionSource, StatusChange, StatusChangedEvent,
 };
 
 use crate::AppState;
@@ -35,6 +35,12 @@ pub struct DocumentRecord {
     /// Team the document belongs to — the second retention-plan dimension.
     pub team: Option<String>,
     pub status: DocumentStatus,
+    /// Confidentiality tier (STORE-04 × CAPTURE-10) — what storage placement
+    /// and at-rest encryption are derived from.
+    pub classification: Confidentiality,
+    /// Where the document's content currently lives; `None` until content
+    /// is uploaded.
+    pub content: Option<BlobPlacement>,
     /// Deletion deadline (PRESERVE-06): while set and in the future, the
     /// document cannot be deleted.
     pub retention: Option<RetentionDeadline>,
@@ -42,6 +48,8 @@ pub struct DocumentRecord {
     pub updated_at: Timestamp,
     /// Every applied status transition, oldest first (audit trail).
     pub history: Vec<StatusChange>,
+    /// Every applied classification change, oldest first (audit trail).
+    pub classification_history: Vec<ClassificationChange>,
 }
 
 /// Check `action` against the current policy, treating a denied `View` as
@@ -75,6 +83,11 @@ pub struct CreateDocument {
     pub doc_type: Option<String>,
     #[serde(default)]
     pub team: Option<String>,
+    /// Confidentiality tier the document starts with (STORE-04). Documents
+    /// unclassified at capture time default to `internal`: never published
+    /// by accident, but not locked to internal-only storage either.
+    #[serde(default)]
+    pub classification: Option<Confidentiality>,
 }
 
 /// `POST /documents` — register a document; it starts life as a draft.
@@ -91,10 +104,13 @@ pub async fn create(
         doc_type: body.doc_type,
         team: body.team,
         status: DocumentStatus::Draft,
+        classification: body.classification.unwrap_or(Confidentiality::Internal),
+        content: None,
         retention: None,
         created_at: now,
         updated_at: now,
         history: Vec::new(),
+        classification_history: Vec::new(),
     };
 
     state

@@ -4,11 +4,16 @@
 //! common metadata shapes) lives here so the server and the workflow
 //! engine always agree on the wire format.
 
+mod classification;
 mod dossier;
 mod policy;
 mod retention;
 mod status;
 
+pub use classification::{
+    BackendLocation, BlobPlacement, ClassificationChange, Confidentiality, PlacementDecision,
+    PlacementPolicy, PlacementRule,
+};
 pub use dossier::{
     DossierAcl, DossierAction, DossierEntry, DossierEntryId, DossierId, EntryReference,
 };

@@ -181,24 +181,38 @@ pub async fn delete_document(
     Principal(actor): Principal,
     Path(id): Path<DocumentId>,
 ) -> Result<Json<DeletionCertificate>, ApiError> {
-    let mut documents = state.documents.write().expect("documents lock poisoned");
-    let record = documents
-        .get_mut(&id)
-        .ok_or(ApiError::DocumentNotFound(id))?;
-
-    authorize(&state, record, DocumentAction::Delete, &actor)?;
-
     let now = Timestamp::now();
-    if let Some(deadline) = &record.retention
-        && deadline.delete_after > now
-    {
-        return Err(ApiError::DeletionBlocked {
-            document: id,
-            until: deadline.delete_after,
-        });
+
+    // Authorize and snapshot under the lock, destroy the blob without it
+    // (storage I/O must not happen under the state lock).
+    let content = {
+        let documents = state.documents.read().expect("documents lock poisoned");
+        let record = documents.get(&id).ok_or(ApiError::DocumentNotFound(id))?;
+
+        authorize(&state, record, DocumentAction::Delete, &actor)?;
+
+        if let Some(deadline) = &record.retention
+            && deadline.delete_after > now
+        {
+            return Err(ApiError::DeletionBlocked {
+                document: id,
+                until: deadline.delete_after,
+            });
+        }
+        record.content.clone()
+    };
+
+    // Bytes first, certificate second: a failing storage medium leaves the
+    // record intact and the request errors — no certificate may claim a
+    // deletion whose blob still exists (PRESERVE-08).
+    if let Some(placement) = &content {
+        crate::placement::destroy_blob(&state, id, placement).await?;
     }
 
-    let record = documents.remove(&id).expect("checked just above");
+    let mut documents = state.documents.write().expect("documents lock poisoned");
+    let record = documents
+        .remove(&id)
+        .ok_or(ApiError::DocumentNotFound(id))?;
     drop(documents);
 
     let certificate = record_deletion(&state, record, actor.user, DeletionTrigger::Manual, now);
@@ -236,62 +250,75 @@ pub async fn sweep(
         notified: Vec::new(),
     };
 
-    let mut documents = state.documents.write().expect("documents lock poisoned");
-    let plan = state
-        .retention_plan
-        .read()
-        .expect("retention plan lock poisoned")
-        .clone();
-
-    let due: Vec<DocumentId> = documents
-        .values()
-        .filter(|record| {
-            matches!(
-                record.status,
-                DocumentStatus::Archived | DocumentStatus::Deletable
-            ) && expired(record, now)
-        })
-        .map(|record| record.id)
-        .collect();
-
+    // Scoped so the state lock is provably released before the blob
+    // deletions below (storage I/O must not happen under it).
     let mut to_delete = Vec::new();
-    for id in due {
-        let record = &documents[&id];
-        let action = plan
-            .applicable_rule(record.doc_type.as_deref(), record.team.as_deref())
-            .map(|rule| rule.on_expiry)
-            .unwrap_or(ExpiryAction::NotifyResponsible);
+    {
+        let mut documents = state.documents.write().expect("documents lock poisoned");
+        let plan = state
+            .retention_plan
+            .read()
+            .expect("retention plan lock poisoned")
+            .clone();
 
-        match action {
-            ExpiryAction::AutoDelete => {
-                to_delete.push(documents.remove(&id).expect("id came from this map"));
-            }
-            ExpiryAction::NotifyResponsible => {
-                let mut notifications = state
-                    .notifications
-                    .write()
-                    .expect("notifications lock poisoned");
-                if notifications.iter().all(|n| n.document != id) {
-                    let notification = RetentionNotification {
-                        document: id,
-                        title: record.title.clone(),
-                        responsible: record.owner.clone(),
-                        delete_after: record
-                            .retention
-                            .as_ref()
-                            .expect("expired() implies a deadline")
-                            .delete_after,
-                        created_at: now,
-                    };
-                    notifications.push(notification.clone());
-                    outcome.notified.push(notification);
+        let due: Vec<DocumentId> = documents
+            .values()
+            .filter(|record| {
+                matches!(
+                    record.status,
+                    DocumentStatus::Archived | DocumentStatus::Deletable
+                ) && expired(record, now)
+            })
+            .map(|record| record.id)
+            .collect();
+
+        for id in due {
+            let record = &documents[&id];
+            let action = plan
+                .applicable_rule(record.doc_type.as_deref(), record.team.as_deref())
+                .map(|rule| rule.on_expiry)
+                .unwrap_or(ExpiryAction::NotifyResponsible);
+
+            match action {
+                ExpiryAction::AutoDelete => {
+                    to_delete.push(documents.remove(&id).expect("id came from this map"));
+                }
+                ExpiryAction::NotifyResponsible => {
+                    let mut notifications = state
+                        .notifications
+                        .write()
+                        .expect("notifications lock poisoned");
+                    if notifications.iter().all(|n| n.document != id) {
+                        let notification = RetentionNotification {
+                            document: id,
+                            title: record.title.clone(),
+                            responsible: record.owner.clone(),
+                            delete_after: record
+                                .retention
+                                .as_ref()
+                                .expect("expired() implies a deadline")
+                                .delete_after,
+                            created_at: now,
+                        };
+                        notifications.push(notification.clone());
+                        outcome.notified.push(notification);
+                    }
                 }
             }
         }
     }
-    drop(documents);
 
     for record in to_delete {
+        // The sweep runs unattended: a blob whose medium errors is logged
+        // and the metadata deletion proceeds — the next sweep cannot retry
+        // (the record is gone), so the log line is the operator's signal to
+        // clean the backend up manually.
+        if let Some(placement) = &record.content
+            && let Err(error) = crate::placement::destroy_blob(&state, record.id, placement).await
+        {
+            tracing::error!(id = %record.id, %error, "sweep could not destroy blob");
+        }
+
         let certificate = record_deletion(
             &state,
             record,
