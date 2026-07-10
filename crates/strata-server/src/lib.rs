@@ -32,6 +32,14 @@
 //!   reclassification re-places non-compliant blobs:
 //!   `PUT`/`GET /documents/{id}/content`,
 //!   `PUT /documents/{id}/classification`, `GET`/`PUT /policy/placement`.
+//! - Search facade (SEARCH-01…05): documents carry keywords, free metadata,
+//!   and a filing-structure folder (`PATCH /documents/{id}`), plus extracted
+//!   full text supplied by the capture pipeline (CAPTURE-07,
+//!   `PUT`/`GET /documents/{id}/text`). One permission-filtered query core
+//!   powers full-text + boolean-filter + folder + time-range search
+//!   (`GET /search`), folder-tree navigation (`GET /search/folders`),
+//!   timeline histograms (`GET /search/timeline`), and stable
+//!   `strata:doc:<uuid>` reference resolution (`GET /refs/{reference}`).
 
 mod crypto;
 mod documents;
@@ -42,6 +50,7 @@ mod identity;
 mod placement;
 mod policy;
 mod retention;
+mod search;
 
 pub use crypto::OperatorKey;
 pub use error::ApiError;
@@ -59,7 +68,7 @@ use strata_common::{
     RetentionNotification, RetentionPlan, StatusChangedEvent, StatusPolicy,
 };
 
-use documents::DocumentRecord;
+use documents::{DocumentRecord, ExtractedText};
 use dossiers::DossierRecord;
 
 pub const SERVICE: &str = "strata-server";
@@ -72,6 +81,10 @@ pub const SERVICE: &str = "strata-server";
 /// administered via `PUT /policy/status`.
 pub struct AppState {
     documents: RwLock<HashMap<DocumentId, DocumentRecord>>,
+    /// Extracted full text per document (CAPTURE-07) — the corpus behind
+    /// full-text search (SEARCH-01). Kept beside the records so document
+    /// responses stay small.
+    texts: RwLock<HashMap<DocumentId, ExtractedText>>,
     dossiers: RwLock<HashMap<DossierId, DossierRecord>>,
     policy: RwLock<StatusPolicy>,
     events: RwLock<Vec<StatusChangedEvent>>,
@@ -105,6 +118,7 @@ impl AppState {
     pub fn with_storage(backends: Vec<StorageBackend>, operator_key: OperatorKey) -> Self {
         Self {
             documents: RwLock::new(HashMap::new()),
+            texts: RwLock::new(HashMap::new()),
             dossiers: RwLock::new(HashMap::new()),
             policy: RwLock::new(StatusPolicy::baseline()),
             events: RwLock::new(Vec::new()),
@@ -131,7 +145,13 @@ pub fn app(state: std::sync::Arc<AppState>) -> Router {
         .route("/documents", post(documents::create).get(documents::list))
         .route(
             "/documents/{id}",
-            get(documents::show).delete(retention::delete_document),
+            get(documents::show)
+                .patch(documents::update)
+                .delete(retention::delete_document),
+        )
+        .route(
+            "/documents/{id}/text",
+            put(documents::set_text).get(documents::get_text),
         )
         .route("/documents/{id}/status", post(documents::change_status))
         .route(
@@ -171,6 +191,10 @@ pub fn app(state: std::sync::Arc<AppState>) -> Router {
             get(retention::notifications_list),
         )
         .route("/events/status", get(events::list))
+        .route("/search", get(search::search))
+        .route("/search/folders", get(search::folders))
+        .route("/search/timeline", get(search::timeline))
+        .route("/refs/{reference}", get(search::resolve))
         .with_state(state)
 }
 

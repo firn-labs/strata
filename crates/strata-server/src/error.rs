@@ -77,6 +77,18 @@ pub enum ApiError {
     #[error("storage backend failure: {0}")]
     Storage(#[from] StorageError),
 
+    #[error("document {0} has no extracted text")]
+    NoExtractedText(DocumentId),
+
+    #[error("invalid filter: {0}")]
+    InvalidFilter(String),
+
+    #[error("'{0}' is not a valid folder path; use '/segment/segment' form")]
+    InvalidFolder(String),
+
+    #[error("'{0}' is not a valid document reference; expected 'strata:doc:<uuid>'")]
+    InvalidReference(String),
+
     #[error("{0}")]
     Unauthenticated(&'static str),
 }
@@ -98,6 +110,10 @@ impl ApiError {
             ApiError::BackendDetached(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::UnreadableBlob(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::Storage(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            ApiError::NoExtractedText(_) => StatusCode::NOT_FOUND,
+            ApiError::InvalidFilter(_) => StatusCode::BAD_REQUEST,
+            ApiError::InvalidFolder(_) => StatusCode::BAD_REQUEST,
+            ApiError::InvalidReference(_) => StatusCode::BAD_REQUEST,
             ApiError::Unauthenticated(_) => StatusCode::UNAUTHORIZED,
         }
     }
