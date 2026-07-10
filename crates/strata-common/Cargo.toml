@@ -8,6 +8,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+jiff.workspace = true
 serde.workspace = true
 uuid.workspace = true
 

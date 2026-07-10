@@ -4,6 +4,12 @@
 //! common metadata shapes) lives here so the server and the workflow
 //! engine always agree on the wire format.
 
+mod policy;
+mod status;
+
+pub use policy::{Actor, DocumentAction, StatusPolicy, Trustee};
+pub use status::{DocumentStatus, StatusChange, StatusChangedEvent};
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 

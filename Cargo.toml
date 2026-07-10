@@ -21,10 +21,13 @@ strata-storage = { path = "crates/strata-storage" }
 anyhow = "1"
 async-trait = "0.1"
 axum = "0.8"
+http-body-util = "0.1"
+jiff = { version = "0.2", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "signal"] }
+tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
