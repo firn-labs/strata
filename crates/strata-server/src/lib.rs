@@ -12,8 +12,16 @@
 //!   ACCESS-09): `GET`/`PUT /policy/status`.
 //! - Status-change event feed for workflow triggers (WORKFLOW-08):
 //!   `GET /events/status?after=<seq>`.
+//! - Dossiers ("E-Akte") that group documents by reference, with own
+//!   metadata, external references, per-dossier ACLs, and per-entry access
+//!   lists (STORE-09, STORE-10, ACCESS-09): `POST`/`GET /dossiers`,
+//!   `GET`/`PATCH /dossiers/{id}`, `PUT /dossiers/{id}/acl`,
+//!   `POST /dossiers/{id}/entries`,
+//!   `DELETE /dossiers/{id}/entries/{entry_id}`,
+//!   `PUT /dossiers/{id}/entries/{entry_id}/access`.
 
 mod documents;
+mod dossiers;
 mod error;
 mod events;
 mod identity;
@@ -24,10 +32,16 @@ pub use error::ApiError;
 use std::collections::HashMap;
 use std::sync::RwLock;
 
-use axum::{Json, Router, routing::get, routing::post};
-use strata_common::{DocumentId, Health, HealthStatus, StatusChangedEvent, StatusPolicy};
+use axum::{
+    Json, Router,
+    routing::{delete, get, post, put},
+};
+use strata_common::{
+    DocumentId, DossierId, Health, HealthStatus, StatusChangedEvent, StatusPolicy,
+};
 
 use documents::DocumentRecord;
+use dossiers::DossierRecord;
 
 pub const SERVICE: &str = "strata-server";
 
@@ -39,6 +53,7 @@ pub const SERVICE: &str = "strata-server";
 /// administered via `PUT /policy/status`.
 pub struct AppState {
     documents: RwLock<HashMap<DocumentId, DocumentRecord>>,
+    dossiers: RwLock<HashMap<DossierId, DossierRecord>>,
     policy: RwLock<StatusPolicy>,
     events: RwLock<Vec<StatusChangedEvent>>,
 }
@@ -47,6 +62,7 @@ impl AppState {
     pub fn new() -> Self {
         Self {
             documents: RwLock::new(HashMap::new()),
+            dossiers: RwLock::new(HashMap::new()),
             policy: RwLock::new(StatusPolicy::baseline()),
             events: RwLock::new(Vec::new()),
         }
@@ -66,6 +82,21 @@ pub fn app(state: std::sync::Arc<AppState>) -> Router {
         .route("/documents", post(documents::create).get(documents::list))
         .route("/documents/{id}", get(documents::show))
         .route("/documents/{id}/status", post(documents::change_status))
+        .route("/dossiers", post(dossiers::create).get(dossiers::list))
+        .route(
+            "/dossiers/{id}",
+            get(dossiers::show).patch(dossiers::update),
+        )
+        .route("/dossiers/{id}/acl", put(dossiers::replace_acl))
+        .route("/dossiers/{id}/entries", post(dossiers::add_entry))
+        .route(
+            "/dossiers/{id}/entries/{entry_id}",
+            delete(dossiers::remove_entry),
+        )
+        .route(
+            "/dossiers/{id}/entries/{entry_id}/access",
+            put(dossiers::set_entry_access),
+        )
         .route("/policy/status", get(policy::show).put(policy::replace))
         .route("/events/status", get(events::list))
         .with_state(state)

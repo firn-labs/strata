@@ -4,9 +4,13 @@
 //! common metadata shapes) lives here so the server and the workflow
 //! engine always agree on the wire format.
 
+mod dossier;
 mod policy;
 mod status;
 
+pub use dossier::{
+    DossierAcl, DossierAction, DossierEntry, DossierEntryId, DossierId, EntryReference,
+};
 pub use policy::{Actor, DocumentAction, StatusPolicy, Trustee};
 pub use status::{DocumentStatus, StatusChange, StatusChangedEvent};
 

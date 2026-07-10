@@ -74,6 +74,12 @@ impl Actor {
             Trustee::Group(name) => self.groups.iter().any(|g| g == name),
         }
     }
+
+    /// Whether any of `trustees` matches this actor. `is_owner` says whether
+    /// the actor owns the object the trustees belong to (document, dossier).
+    pub fn matches_any(&self, trustees: &[Trustee], is_owner: bool) -> bool {
+        trustees.iter().any(|t| self.matches(t, is_owner))
+    }
 }
 
 /// Permissions per lifecycle status: status → action → allowed trustees.
@@ -99,7 +105,7 @@ impl StatusPolicy {
         self.rules
             .get(&status)
             .and_then(|actions| actions.get(&action))
-            .is_some_and(|trustees| trustees.iter().any(|t| actor.matches(t, is_owner)))
+            .is_some_and(|trustees| actor.matches_any(trustees, is_owner))
     }
 
     /// The policy shipped as the initial server configuration.
